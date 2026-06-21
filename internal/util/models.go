@@ -3,12 +3,12 @@ package util
 import (
 	"context"
 
-	"github.com/Infisical/infisical/k8-operator/internal/util/sse"
-	infisicalSdk "github.com/infisical/go-sdk"
+	"github.com/hanzokms/kubernetes-operator/internal/util/sse"
+	kmsSdk "github.com/hanzokms/go-sdk"
 )
 
 type ResourceVariables struct {
-	InfisicalClient  infisicalSdk.InfisicalClientInterface
+	KMSClient  kmsSdk.ClientInterface
 	CancelCtx        context.CancelFunc
 	AuthDetails      AuthenticationDetails
 	ServerSentEvents *sse.ConnectionRegistry

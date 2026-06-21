@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/Infisical/infisical/k8-operator/api/v1alpha1"
-	"github.com/Infisical/infisical/k8-operator/internal/config"
-	"github.com/Infisical/infisical/k8-operator/internal/constants"
-	"github.com/Infisical/infisical/k8-operator/internal/util"
+	"github.com/hanzokms/kubernetes-operator/api/v1alpha1"
+	"github.com/hanzokms/kubernetes-operator/internal/config"
+	"github.com/hanzokms/kubernetes-operator/internal/constants"
+	"github.com/hanzokms/kubernetes-operator/internal/util"
 	"github.com/go-logr/logr"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -18,8 +18,8 @@ import (
 	controllerClient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const DEPLOYMENT_SECRET_NAME_ANNOTATION_PREFIX = "secrets.infisical.com/managed-secret"
-const AUTO_RELOAD_DEPLOYMENT_ANNOTATION = "secrets.infisical.com/auto-reload" // needs to be set to true for a deployment to start auto redeploying
+const DEPLOYMENT_SECRET_NAME_ANNOTATION_PREFIX = "secrets.hanzo.ai/managed-secret"
+const AUTO_RELOAD_DEPLOYMENT_ANNOTATION = "secrets.hanzo.ai/auto-reload" // needs to be set to true for a deployment to start auto redeploying
 
 func ReconcileDeploymentsWithManagedSecrets(ctx context.Context, client controllerClient.Client, logger logr.Logger, managedSecret v1alpha1.ManagedKubeSecretConfig, isNamespaceScoped bool) (int, error) {
 	listOfDeployments := &v1.DeploymentList{}
@@ -265,10 +265,10 @@ func ReconcileStatefulSet(ctx context.Context, client controllerClient.Client, l
 	return nil
 }
 
-func GetInfisicalConfigMap(ctx context.Context, client client.Client, isNamespaceScoped bool) (configMap config.InfisicalGlobalConfig, errToReturn error) {
+func GetKMSConfigMap(ctx context.Context, client client.Client, isNamespaceScoped bool) (configMap config.KMSGlobalConfig, errToReturn error) {
 	// default key values
-	defaultConfigMapData := config.InfisicalGlobalConfig{
-		HostAPI: constants.INFISICAL_DOMAIN,
+	defaultConfigMapData := config.KMSGlobalConfig{
+		HostAPI: constants.KMS_DOMAIN,
 	}
 
 	// this will never work if we're namespace scoped, because the operator can't read outside of its namespace by our current RBAC rules.
@@ -294,6 +294,6 @@ func GetInfisicalConfigMap(ctx context.Context, client client.Client, isNamespac
 	if kubeConfigMap == nil {
 		return defaultConfigMapData, nil
 	} else {
-		return config.ParseInfisicalGlobalConfig(kubeConfigMap.Data)
+		return config.ParseKMSGlobalConfig(kubeConfigMap.Data)
 	}
 }

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kms-operator-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kms-config
+  namespace: kms-operator-system
+data:
+  hostAPI: "https://example.com/api"
+  tls.caRef.secretName: custom-ca-certificate
+  tls.caRef.secretNamespace: default
+  tls.caRef.key: ca.crt
+  

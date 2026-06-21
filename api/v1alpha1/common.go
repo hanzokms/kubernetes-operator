@@ -1,6 +1,6 @@
 package v1alpha1
 
-type GenericInfisicalAuthentication struct {
+type GenericKMSAuthentication struct {
 	// +kubebuilder:validation:Optional
 	UniversalAuth GenericUniversalAuth `json:"universalAuth,omitempty"`
 	// +kubebuilder:validation:Optional
@@ -114,7 +114,7 @@ type ManagedKubeSecretConfig struct {
 
 	// The Kubernetes Secret creation policy.
 	// Enum with values: 'Owner', 'Orphan'.
-	// Owner creates the secret and sets .metadata.ownerReferences of the InfisicalSecret CRD that created it.
+	// Owner creates the secret and sets .metadata.ownerReferences of the KMSSecret CRD that created it.
 	// Orphan will not set the secret owner. This will result in the secret being orphaned and not deleted when the resource is deleted.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default:=Orphan
@@ -132,7 +132,7 @@ type ManagedKubeConfigMapConfig struct {
 
 	// The Kubernetes ConfigMap creation policy.
 	// Enum with values: 'Owner', 'Orphan'.
-	// Owner creates the config map and sets .metadata.ownerReferences of the InfisicalSecret CRD that created it.
+	// Owner creates the config map and sets .metadata.ownerReferences of the KMSSecret CRD that created it.
 	// Orphan will not set the config map owner. This will result in the config map being orphaned and not deleted when the resource is deleted.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default:=Orphan
@@ -148,7 +148,7 @@ type ManagedKubeConfigMapConfig struct {
 }
 
 // SecretTemplateMetadata defines custom metadata for the managed secret.
-// When specified, these values are used instead of copying metadata from the InfisicalSecret CR.
+// When specified, these values are used instead of copying metadata from the KMSSecret CR.
 type SecretTemplateMetadata struct {
 	// Custom labels to apply to the managed secret
 	// +kubebuilder:validation:Optional
@@ -167,7 +167,7 @@ type SecretTemplate struct {
 	// +kubebuilder:validation:Optional
 	Data map[string]string `json:"data,omitempty"`
 	// Custom metadata (labels/annotations) for the managed secret.
-	// When specified, these values are used instead of copying metadata from the InfisicalSecret CR.
+	// When specified, these values are used instead of copying metadata from the KMSSecret CR.
 	// +kubebuilder:validation:Optional
 	Metadata *SecretTemplateMetadata `json:"metadata,omitempty"`
 }

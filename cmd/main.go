@@ -39,9 +39,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	secretsv1alpha1 "github.com/Infisical/infisical/k8-operator/api/v1alpha1"
-	"github.com/Infisical/infisical/k8-operator/internal/controller"
-	"github.com/Infisical/infisical/k8-operator/internal/template"
+	secretsv1alpha1 "github.com/hanzokms/kubernetes-operator/api/v1alpha1"
+	"github.com/hanzokms/kubernetes-operator/internal/controller"
+	"github.com/hanzokms/kubernetes-operator/internal/template"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -192,7 +192,7 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "cf2b8c44.infisical.com",
+		LeaderElectionID:       "cf2b8c44.hanzo.ai",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -245,31 +245,31 @@ func main() {
 
 	template.InitializeTemplateFunctions()
 
-	if err := (&controller.InfisicalSecretReconciler{
+	if err := (&controller.KMSSecretReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		BaseLogger:        ctrl.Log,
 		IsNamespaceScoped: isNamespaceScoped,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "InfisicalSecret")
+		setupLog.Error(err, "unable to create controller", "controller", "KMSSecret")
 		os.Exit(1)
 	}
-	if err := (&controller.InfisicalPushSecretReconciler{
+	if err := (&controller.KMSPushSecretReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		IsNamespaceScoped: isNamespaceScoped,
 		BaseLogger:        ctrl.Log,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "InfisicalPushSecret")
+		setupLog.Error(err, "unable to create controller", "controller", "KMSPushSecret")
 		os.Exit(1)
 	}
-	if err := (&controller.InfisicalDynamicSecretReconciler{
+	if err := (&controller.KMSDynamicSecretReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		BaseLogger:        ctrl.Log,
 		IsNamespaceScoped: isNamespaceScoped,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "InfisicalDynamicSecret")
+		setupLog.Error(err, "unable to create controller", "controller", "KMSDynamicSecret")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

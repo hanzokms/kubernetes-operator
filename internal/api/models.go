@@ -3,7 +3,7 @@ package api
 import (
 	"time"
 
-	"github.com/Infisical/infisical/k8-operator/internal/model"
+	"github.com/hanzokms/kubernetes-operator/internal/model"
 )
 
 type GetEncryptedWorkspaceKeyRequest struct {

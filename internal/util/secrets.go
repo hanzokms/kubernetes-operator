@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Infisical/infisical/k8-operator/api/v1alpha1"
-	"github.com/Infisical/infisical/k8-operator/internal/api"
-	"github.com/Infisical/infisical/k8-operator/internal/model"
-	infisical "github.com/infisical/go-sdk"
+	"github.com/hanzokms/kubernetes-operator/api/v1alpha1"
+	"github.com/hanzokms/kubernetes-operator/internal/api"
+	"github.com/hanzokms/kubernetes-operator/internal/model"
+	kmsSdk "github.com/hanzokms/go-sdk"
 )
 
 type DecodedSymmetricEncryptionDetails = struct {
@@ -27,8 +27,8 @@ func VerifyServiceToken(serviceToken string) (string, error) {
 	return serviceToken, nil
 }
 
-func GetServiceTokenDetails(infisicalToken string) (api.GetServiceTokenDetailsResponse, error) {
-	serviceTokenParts := strings.SplitN(infisicalToken, ".", 4)
+func GetServiceTokenDetails(kmsToken string) (api.GetServiceTokenDetailsResponse, error) {
+	serviceTokenParts := strings.SplitN(kmsToken, ".", 4)
 	if len(serviceTokenParts) < 4 {
 		return api.GetServiceTokenDetailsResponse{}, fmt.Errorf("invalid service token entered. Please double check your service token and try again")
 	}
@@ -53,13 +53,13 @@ func GetServiceTokenDetails(infisicalToken string) (api.GetServiceTokenDetailsRe
 	return serviceTokenDetails, nil
 }
 
-func GetPlainTextSecretsViaMachineIdentity(infisicalClient infisical.InfisicalClientInterface, secretScope v1alpha1.MachineIdentityScopeInWorkspace) ([]model.SingleEnvironmentVariable, error) {
+func GetPlainTextSecretsViaMachineIdentity(kmsClient kmsSdk.ClientInterface, secretScope v1alpha1.MachineIdentityScopeInWorkspace) ([]model.SingleEnvironmentVariable, error) {
 
 	var environmentVariables []model.SingleEnvironmentVariable
 
 	if secretScope.SecretName == "" {
 
-		secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
+		secrets, err := kmsClient.Secrets().List(kmsSdk.ListSecretsOptions{
 			ProjectID:              secretScope.ProjectID,
 			Environment:            secretScope.EnvSlug,
 			Recursive:              secretScope.Recursive,
@@ -83,7 +83,7 @@ func GetPlainTextSecretsViaMachineIdentity(infisicalClient infisical.InfisicalCl
 			})
 		}
 	} else {
-		secret, err := infisicalClient.Secrets().Retrieve(infisical.RetrieveSecretOptions{
+		secret, err := kmsClient.Secrets().Retrieve(kmsSdk.RetrieveSecretOptions{
 			SecretKey:              secretScope.SecretName,
 			ProjectID:              secretScope.ProjectID,
 			Environment:            secretScope.EnvSlug,
@@ -108,7 +108,7 @@ func GetPlainTextSecretsViaMachineIdentity(infisicalClient infisical.InfisicalCl
 	return environmentVariables, nil
 }
 
-func GetPlainTextSecretsViaServiceToken(infisicalClient infisical.InfisicalClientInterface, fullServiceToken string, envSlug string, secretPath string, recursive bool) ([]model.SingleEnvironmentVariable, error) {
+func GetPlainTextSecretsViaServiceToken(kmsClient kmsSdk.ClientInterface, fullServiceToken string, envSlug string, secretPath string, recursive bool) ([]model.SingleEnvironmentVariable, error) {
 	serviceTokenParts := strings.SplitN(fullServiceToken, ".", 4)
 	if len(serviceTokenParts) < 4 {
 		return nil, fmt.Errorf("invalid service token entered. Please double check your service token and try again")
@@ -132,7 +132,7 @@ func GetPlainTextSecretsViaServiceToken(infisicalClient infisical.InfisicalClien
 		return nil, fmt.Errorf("unable to get service token details. [err=%v]", err)
 	}
 
-	secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
+	secrets, err := kmsClient.Secrets().List(kmsSdk.ListSecretsOptions{
 		ProjectID:              serviceTokenDetails.Workspace,
 		Environment:            envSlug,
 		Recursive:              recursive,
@@ -165,7 +165,7 @@ func GetPlainTextSecretsViaServiceToken(infisicalClient infisical.InfisicalClien
 // Fetches plaintext secrets from an API endpoint using a service account.
 // The function fetches the service account details and keys, decrypts the workspace key, fetches the encrypted secrets for the specified project and environment, and decrypts the secrets using the decrypted workspace key.
 // Returns the plaintext secrets, encrypted secrets response, and any errors that occurred during the process.
-func GetPlainTextSecretsViaServiceAccount(infisicalClient infisical.InfisicalClientInterface, serviceAccountCreds model.ServiceAccountDetails, projectId string, environmentName string) ([]model.SingleEnvironmentVariable, error) {
+func GetPlainTextSecretsViaServiceAccount(kmsClient kmsSdk.ClientInterface, serviceAccountCreds model.ServiceAccountDetails, projectId string, environmentName string) ([]model.SingleEnvironmentVariable, error) {
 
 	httpClient, err := CreateRestyClient(model.CreateRestyClientOptions{
 		AccessToken: serviceAccountCreds.AccessKey,
@@ -199,7 +199,7 @@ func GetPlainTextSecretsViaServiceAccount(infisicalClient infisical.InfisicalCli
 		return nil, fmt.Errorf("unable to find key for [projectId=%s] [err=%v]. Ensure that the given service account has access to given projectId", projectId, err)
 	}
 
-	secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
+	secrets, err := kmsClient.Secrets().List(kmsSdk.ListSecretsOptions{
 		ProjectID:              projectId,
 		Environment:            environmentName,
 		Recursive:              false,

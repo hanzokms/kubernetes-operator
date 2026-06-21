@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Infisical/infisical/k8-operator/api/v1alpha1"
-	"github.com/Infisical/infisical/k8-operator/internal/constants"
-	"github.com/Infisical/infisical/k8-operator/internal/model"
+	"github.com/hanzokms/kubernetes-operator/api/v1alpha1"
+	"github.com/hanzokms/kubernetes-operator/internal/constants"
+	"github.com/hanzokms/kubernetes-operator/internal/model"
 	corev1 "k8s.io/api/core/v1"
 	k8Errors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -17,11 +17,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const INFISICAL_MACHINE_IDENTITY_CLIENT_ID = "clientId"
-const INFISICAL_MACHINE_IDENTITY_CLIENT_SECRET = "clientSecret"
+const KMS_MACHINE_IDENTITY_CLIENT_ID = "clientId"
+const KMS_MACHINE_IDENTITY_CLIENT_SECRET = "clientSecret"
 
-const INFISICAL_MACHINE_IDENTITY_LDAP_USERNAME = "username"
-const INFISICAL_MACHINE_IDENTITY_LDAP_PASSWORD = "password"
+const KMS_MACHINE_IDENTITY_LDAP_USERNAME = "username"
+const KMS_MACHINE_IDENTITY_LDAP_PASSWORD = "password"
 
 func GetKubeSecretByNamespacedName(ctx context.Context, reconcilerClient client.Client, namespacedName types.NamespacedName) (*corev1.Secret, error) {
 	kubeSecret := &corev1.Secret{}
@@ -43,7 +43,7 @@ func GetKubeConfigMapByNamespacedName(ctx context.Context, reconcilerClient clie
 	return kubeConfigMap, err
 }
 
-func GetInfisicalUniversalAuthFromKubeSecret(ctx context.Context, reconcilerClient client.Client, universalAuthRef v1alpha1.KubeSecretReference, isNamespaceScoped bool) (machineIdentityDetails model.UniversalAuthIdentityDetails, err error) {
+func GetKMSUniversalAuthFromKubeSecret(ctx context.Context, reconcilerClient client.Client, universalAuthRef v1alpha1.KubeSecretReference, isNamespaceScoped bool) (machineIdentityDetails model.UniversalAuthIdentityDetails, err error) {
 
 	universalAuthCredsFromKubeSecret, err := GetKubeSecretByNamespacedName(ctx, reconcilerClient, types.NamespacedName{
 		Namespace: universalAuthRef.SecretNamespace,
@@ -61,14 +61,14 @@ func GetInfisicalUniversalAuthFromKubeSecret(ctx context.Context, reconcilerClie
 		return model.UniversalAuthIdentityDetails{}, fmt.Errorf("something went wrong when fetching your machine identity credentials [err=%s]", err)
 	}
 
-	clientIdFromSecret := universalAuthCredsFromKubeSecret.Data[INFISICAL_MACHINE_IDENTITY_CLIENT_ID]
-	clientSecretFromSecret := universalAuthCredsFromKubeSecret.Data[INFISICAL_MACHINE_IDENTITY_CLIENT_SECRET]
+	clientIdFromSecret := universalAuthCredsFromKubeSecret.Data[KMS_MACHINE_IDENTITY_CLIENT_ID]
+	clientSecretFromSecret := universalAuthCredsFromKubeSecret.Data[KMS_MACHINE_IDENTITY_CLIENT_SECRET]
 
 	return model.UniversalAuthIdentityDetails{ClientId: string(clientIdFromSecret), ClientSecret: string(clientSecretFromSecret)}, nil
 
 }
 
-func GetInfisicalLdapAuthFromKubeSecret(ctx context.Context, reconcilerClient client.Client, ldapAuthRef v1alpha1.KubeSecretReference, isNamespaceScoped bool) (machineIdentityDetails model.LdapIdentityDetails, err error) {
+func GetKMSLdapAuthFromKubeSecret(ctx context.Context, reconcilerClient client.Client, ldapAuthRef v1alpha1.KubeSecretReference, isNamespaceScoped bool) (machineIdentityDetails model.LdapIdentityDetails, err error) {
 
 	ldapAuthCredsFromKubeSecret, err := GetKubeSecretByNamespacedName(ctx, reconcilerClient, types.NamespacedName{
 		Namespace: ldapAuthRef.SecretNamespace,
@@ -86,8 +86,8 @@ func GetInfisicalLdapAuthFromKubeSecret(ctx context.Context, reconcilerClient cl
 		return model.LdapIdentityDetails{}, fmt.Errorf("something went wrong when fetching your machine identity credentials [err=%s]", err)
 	}
 
-	usernameFromSecret := ldapAuthCredsFromKubeSecret.Data[INFISICAL_MACHINE_IDENTITY_LDAP_USERNAME]
-	passwordFromSecret := ldapAuthCredsFromKubeSecret.Data[INFISICAL_MACHINE_IDENTITY_LDAP_PASSWORD]
+	usernameFromSecret := ldapAuthCredsFromKubeSecret.Data[KMS_MACHINE_IDENTITY_LDAP_USERNAME]
+	passwordFromSecret := ldapAuthCredsFromKubeSecret.Data[KMS_MACHINE_IDENTITY_LDAP_PASSWORD]
 
 	return model.LdapIdentityDetails{Username: string(usernameFromSecret), Password: string(passwordFromSecret)}, nil
 
@@ -122,17 +122,17 @@ func GetRestClientFromClient() (rest.Interface, error) {
 
 }
 
-func GetInfisicalTokenFromKubeSecret(ctx context.Context, reconcilerClient client.Client, infisicalSecret v1alpha1.InfisicalSecret) (string, error) {
+func GetKMSTokenFromKubeSecret(ctx context.Context, reconcilerClient client.Client, kmsSecret v1alpha1.KMSSecret) (string, error) {
 	// default to new secret ref structure
-	secretName := infisicalSecret.Spec.Authentication.ServiceToken.ServiceTokenSecretReference.SecretName
-	secretNamespace := infisicalSecret.Spec.Authentication.ServiceToken.ServiceTokenSecretReference.SecretNamespace
+	secretName := kmsSecret.Spec.Authentication.ServiceToken.ServiceTokenSecretReference.SecretName
+	secretNamespace := kmsSecret.Spec.Authentication.ServiceToken.ServiceTokenSecretReference.SecretNamespace
 	// fall back to previous secret ref
 	if secretName == "" {
-		secretName = infisicalSecret.Spec.TokenSecretReference.SecretName
+		secretName = kmsSecret.Spec.TokenSecretReference.SecretName
 	}
 
 	if secretNamespace == "" {
-		secretNamespace = infisicalSecret.Spec.TokenSecretReference.SecretNamespace
+		secretNamespace = kmsSecret.Spec.TokenSecretReference.SecretNamespace
 	}
 
 	tokenSecret, err := GetKubeSecretByNamespacedName(ctx, reconcilerClient, types.NamespacedName{
@@ -145,18 +145,18 @@ func GetInfisicalTokenFromKubeSecret(ctx context.Context, reconcilerClient clien
 	}
 
 	if err != nil {
-		return "", fmt.Errorf("failed to read Infisical token secret from secret named [%s] in namespace [%s]: with error [%w]", infisicalSecret.Spec.TokenSecretReference.SecretName, infisicalSecret.Spec.TokenSecretReference.SecretNamespace, err)
+		return "", fmt.Errorf("failed to read Hanzo KMS token secret from secret named [%s] in namespace [%s]: with error [%w]", kmsSecret.Spec.TokenSecretReference.SecretName, kmsSecret.Spec.TokenSecretReference.SecretNamespace, err)
 	}
 
-	infisicalServiceToken := tokenSecret.Data[constants.INFISICAL_TOKEN_SECRET_KEY_NAME]
+	kmsServiceToken := tokenSecret.Data[constants.KMS_TOKEN_SECRET_KEY_NAME]
 
-	return strings.Replace(string(infisicalServiceToken), " ", "", -1), nil
+	return strings.Replace(string(kmsServiceToken), " ", "", -1), nil
 }
 
-func GetInfisicalServiceAccountCredentialsFromKubeSecret(ctx context.Context, reconcilerClient client.Client, infisicalSecret v1alpha1.InfisicalSecret) (serviceAccountDetails model.ServiceAccountDetails, err error) {
+func GetKMSServiceAccountCredentialsFromKubeSecret(ctx context.Context, reconcilerClient client.Client, kmsSecret v1alpha1.KMSSecret) (serviceAccountDetails model.ServiceAccountDetails, err error) {
 
-	secretNamespace := infisicalSecret.Spec.Authentication.ServiceAccount.ServiceAccountSecretReference.SecretNamespace
-	secretName := infisicalSecret.Spec.Authentication.ServiceAccount.ServiceAccountSecretReference.SecretName
+	secretNamespace := kmsSecret.Spec.Authentication.ServiceAccount.ServiceAccountSecretReference.SecretNamespace
+	secretName := kmsSecret.Spec.Authentication.ServiceAccount.ServiceAccountSecretReference.SecretName
 
 	serviceAccountCredsFromKubeSecret, err := GetKubeSecretByNamespacedName(ctx, reconcilerClient, types.NamespacedName{
 		Namespace: secretNamespace,

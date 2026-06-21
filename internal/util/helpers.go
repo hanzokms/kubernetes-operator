@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Infisical/infisical/k8-operator/internal/config"
-	"github.com/Infisical/infisical/k8-operator/internal/constants"
-	"github.com/Infisical/infisical/k8-operator/internal/model"
+	"github.com/hanzokms/kubernetes-operator/internal/config"
+	"github.com/hanzokms/kubernetes-operator/internal/constants"
+	"github.com/hanzokms/kubernetes-operator/internal/model"
 	"github.com/go-resty/resty/v2"
 )
 

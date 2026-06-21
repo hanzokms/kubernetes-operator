@@ -9,11 +9,11 @@ metadata:
     rbac.authorization.k8s.io/aggregate-to-admin: "true"
     rbac.authorization.k8s.io/aggregate-to-edit: "true"
 rules:
-- apiGroups: ["secrets.infisical.com"]
-  resources: ["infisicalsecrets", "infisicalpushsecrets", "infisicaldynamicsecrets", "clustergenerators"]
+- apiGroups: ["secrets.hanzo.ai"]
+  resources: ["kmssecrets", "kmspushsecrets", "kmsdynamicsecrets", "clustergenerators"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
-- apiGroups: ["secrets.infisical.com"]
-  resources: ["infisicalsecrets/status", "infisicalpushsecrets/status", "infisicaldynamicsecrets/status"]
+- apiGroups: ["secrets.hanzo.ai"]
+  resources: ["kmssecrets/status", "kmspushsecrets/status", "kmsdynamicsecrets/status"]
   verbs: ["get", "list", "watch"]
 
 ---
@@ -26,10 +26,10 @@ metadata:
     rbac.authorization.k8s.io/aggregate-to-view: "true"
     rbac.authorization.k8s.io/aggregate-to-cluster-reader: "true"
 rules:
-- apiGroups: ["secrets.infisical.com"]
-  resources: ["infisicalsecrets", "infisicalpushsecrets", "infisicaldynamicsecrets", "clustergenerators"]
+- apiGroups: ["secrets.hanzo.ai"]
+  resources: ["kmssecrets", "kmspushsecrets", "kmsdynamicsecrets", "clustergenerators"]
   verbs: ["get", "list", "watch"]
-- apiGroups: ["secrets.infisical.com"]
-  resources: ["infisicalsecrets/status", "infisicalpushsecrets/status", "infisicaldynamicsecrets/status"]
+- apiGroups: ["secrets.hanzo.ai"]
+  resources: ["kmssecrets/status", "kmspushsecrets/status", "kmsdynamicsecrets/status"]
   verbs: ["get", "list", "watch"]
 {{- end }}

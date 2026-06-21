@@ -1,64 +1,64 @@
-# Infisical Helm Chart
+# Hanzo KMS Helm Chart
 
-This is the Infisical Secrets Operator Helm chart. Find the integration documentation [here](https://infisical.com/docs/integrations/platforms/kubernetes)
+This is the Hanzo KMS Secrets Operator Helm chart. Find the integration documentation [here](https://hanzo.ai/docs/integrations/platforms/kubernetes)
 
 ## Installation
 
 To install the chart, run the following :
 
 ```sh
-# Add the Infisical repository
-helm repo add infisical 'https://dl.cloudsmith.io/public/infisical/helm-charts/helm/charts/' && helm repo update
+# Add the Hanzo KMS repository
+helm repo add kms 'https://dl.cloudsmith.io/public/kms/helm-charts/helm/charts/' && helm repo update
 
-# Install Infisical Secrets Operator (with default values)
+# Install Hanzo KMS Secrets Operator (with default values)
 helm upgrade --install --atomic \
-  -n infisical-dev --create-namespace \
-  infisical-secrets-operator infisical/secrets-operator
+  -n kms-dev --create-namespace \
+  kms-secrets-operator kms/secrets-operator
 
-# Install Infisical Secrets Operator (with custom inline values, replace with your own values)
+# Install Hanzo KMS Secrets Operator (with custom inline values, replace with your own values)
 helm upgrade --install --atomic \
-  -n infisical-dev --create-namespace \
+  -n kms-dev --create-namespace \
   --set controllerManager.replicas=3 \
-  infisical-secrets-operator infisical/secrets-operator
+  kms-secrets-operator kms/secrets-operator
 
-# Install Infisical Secrets Operator (with custom values file, replace with your own values file)
+# Install Hanzo KMS Secrets Operator (with custom values file, replace with your own values file)
 helm upgrade --install --atomic \
-  -n infisical-dev --create-namespace \
+  -n kms-dev --create-namespace \
   -f custom-values.yaml \
-  infisical-secrets-operator infisical/secrets-operator
+  kms-secrets-operator kms/secrets-operator
 ```
 
 ## Synchronization
 
-To sync your secrets from Infisical (or from your own instance), create the below resources :
+To sync your secrets from Hanzo KMS (or from your own instance), create the below resources :
 
 ```sh
 # Create the tokenSecretReference (replace with your own token)
-kubectl create secret generic infisical-example-service-token \
-  --from-literal=infisicalToken="<infisical-token-here>"
+kubectl create secret generic kms-example-service-token \
+  --from-literal=kmsToken="<kms-token-here>"
 
-# Create the InfisicalSecret
+# Create the KMSSecret
 cat <<EOF | kubectl apply -f -
-apiVersion: secrets.infisical.com/v1alpha1
-kind: InfisicalSecret
+apiVersion: secrets.hanzo.ai/v1alpha1
+kind: KMSSecret
 metadata:
-  # Name of of this InfisicalSecret resource
-  name: infisicalsecret-example
+  # Name of of this KMSSecret resource
+  name: kmssecret-example
 spec:
-  # The host that should be used to pull secrets from. The default value is https://app.infisical.com/api.
-  hostAPI: https://app.infisical.com/api
+  # The host that should be used to pull secrets from. The default value is https://kms.hanzo.ai/api.
+  hostAPI: https://kms.hanzo.ai/api
 
-  # The Kubernetes secret the stores the Infisical token
+  # The Kubernetes secret the stores the Hanzo KMS token
   tokenSecretReference:
     # Kubernetes secret name
-    secretName: infisical-example-service-token
+    secretName: kms-example-service-token
     # The secret namespace
     secretNamespace: default
 
-  # The Kubernetes secret that Infisical Operator will create and populate with secrets from the above project
+  # The Kubernetes secret that Hanzo KMS Operator will create and populate with secrets from the above project
   managedSecretReference:
     # The name of managed Kubernetes secret that should be created
-    secretName: infisical-managed-secret
+    secretName: kms-managed-secret
     # The namespace the managed secret should be installed in
     secretNamespace: default
 EOF
@@ -73,15 +73,15 @@ To use the above created manage secrets, you can use the below methods :
 - `envFrom`
 - `volumes`
 
-Check the [docs](https://infisical.com/docs/integrations/platforms/kubernetes#using-managed-secret-in-your-deployment) to learn more about their implementation within your k8s resources
+Check the [docs](https://hanzo.ai/docs/integrations/platforms/kubernetes#using-managed-secret-in-your-deployment) to learn more about their implementation within your k8s resources
 
 #### Auto-reload
 
-And if you want to [auto-reload](https://infisical.com/docs/integrations/platforms/kubernetes#auto-redeployment) your deployments, add this annotation where the managed secret is consumed :
+And if you want to [auto-reload](https://hanzo.ai/docs/integrations/platforms/kubernetes#auto-redeployment) your deployments, add this annotation where the managed secret is consumed :
 
 ```yaml
 annotations:
-  secrets.infisical.com/auto-reload: "true"
+  secrets.hanzo.ai/auto-reload: "true"
 ```
 
 ## Parameters

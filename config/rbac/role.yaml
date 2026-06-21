@@ -55,12 +55,12 @@ rules:
   verbs:
   - create
 - apiGroups:
-  - secrets.infisical.com
+  - secrets.hanzo.ai
   resources:
   - clustergenerators
-  - infisicaldynamicsecrets
-  - infisicalpushsecrets
-  - infisicalsecrets
+  - kmsdynamicsecrets
+  - kmspushsecrets
+  - kmssecrets
   verbs:
   - create
   - delete
@@ -70,19 +70,19 @@ rules:
   - update
   - watch
 - apiGroups:
-  - secrets.infisical.com
+  - secrets.hanzo.ai
   resources:
-  - infisicaldynamicsecrets/finalizers
-  - infisicalpushsecrets/finalizers
-  - infisicalsecrets/finalizers
+  - kmsdynamicsecrets/finalizers
+  - kmspushsecrets/finalizers
+  - kmssecrets/finalizers
   verbs:
   - update
 - apiGroups:
-  - secrets.infisical.com
+  - secrets.hanzo.ai
   resources:
-  - infisicaldynamicsecrets/status
-  - infisicalpushsecrets/status
-  - infisicalsecrets/status
+  - kmsdynamicsecrets/status
+  - kmspushsecrets/status
+  - kmssecrets/status
   verbs:
   - get
   - patch

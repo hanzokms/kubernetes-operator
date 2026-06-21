@@ -17,7 +17,7 @@ controllerManager:
         - ALL
       readOnlyRootFilesystem: true
     image:
-      repository: infisical/kubernetes-operator
+      repository: kms/kubernetes-operator
       tag: v0.10.25
     resources:
       limits:

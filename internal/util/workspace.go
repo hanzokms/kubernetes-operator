@@ -3,8 +3,8 @@ package util
 import (
 	"fmt"
 
-	"github.com/Infisical/infisical/k8-operator/internal/api"
-	"github.com/Infisical/infisical/k8-operator/internal/model"
+	"github.com/hanzokms/kubernetes-operator/internal/api"
+	"github.com/hanzokms/kubernetes-operator/internal/model"
 )
 
 func GetProjectByID(accessToken string, projectId string) (model.Project, error) {

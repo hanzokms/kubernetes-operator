@@ -1,0 +1,938 @@
+package kmssecret
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"sort"
+	"strings"
+	tpl "text/template"
+
+	"github.com/hanzokms/kubernetes-operator/api/v1alpha1"
+	"github.com/hanzokms/kubernetes-operator/internal/api"
+	"github.com/hanzokms/kubernetes-operator/internal/config"
+	"github.com/hanzokms/kubernetes-operator/internal/constants"
+	"github.com/hanzokms/kubernetes-operator/internal/crypto"
+	"github.com/hanzokms/kubernetes-operator/internal/model"
+	"github.com/hanzokms/kubernetes-operator/internal/template"
+	"github.com/hanzokms/kubernetes-operator/internal/util"
+	"github.com/hanzokms/kubernetes-operator/internal/util/sse"
+	"github.com/go-logr/logr"
+
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+
+	kmsSdk "github.com/hanzokms/go-sdk"
+	corev1 "k8s.io/api/core/v1"
+	k8Errors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
+)
+
+const FINALIZER_NAME = "secrets.finalizers.hanzo.ai"
+
+var SYSTEM_PREFIXES = []string{"kubectl.kubernetes.io/", "kubernetes.io/", "k8s.io/", "helm.sh/"}
+
+type KMSSecretReconciler struct {
+	client.Client
+	Scheme            *runtime.Scheme
+	IsNamespaceScoped bool
+}
+
+func (r *KMSSecretReconciler) getKMSTokenFromKubeSecret(ctx context.Context, kmsSecret v1alpha1.KMSSecret) (string, error) {
+	// default to new secret ref structure
+	secretName := kmsSecret.Spec.Authentication.ServiceToken.ServiceTokenSecretReference.SecretName
+	secretNamespace := kmsSecret.Spec.Authentication.ServiceToken.ServiceTokenSecretReference.SecretNamespace
+	// fall back to previous secret ref
+	if secretName == "" {
+		secretName = kmsSecret.Spec.TokenSecretReference.SecretName
+	}
+
+	if secretNamespace == "" {
+		secretNamespace = kmsSecret.Spec.TokenSecretReference.SecretNamespace
+	}
+
+	tokenSecret, err := util.GetKubeSecretByNamespacedName(ctx, r.Client, types.NamespacedName{
+		Namespace: secretNamespace,
+		Name:      secretName,
+	})
+
+	if k8Errors.IsNotFound(err) || (secretNamespace == "" && secretName == "") {
+		return "", nil
+	}
+
+	if err != nil {
+		if util.IsNamespaceScopedError(err, r.IsNamespaceScoped) {
+			return "", fmt.Errorf("unable to fetch Kubernetes CA certificate secret. Your Operator installation is namespace scoped, and cannot read secrets outside of the namespace it is installed in. Please ensure the CA certificate secret is in the same namespace as the operator. [err=%v]", err)
+		}
+		return "", fmt.Errorf("failed to read Hanzo KMS token secret from secret named [%s] in namespace [%s]: with error [%w]", kmsSecret.Spec.TokenSecretReference.SecretName, kmsSecret.Spec.TokenSecretReference.SecretNamespace, err)
+	}
+
+	kmsServiceToken := tokenSecret.Data[constants.KMS_TOKEN_SECRET_KEY_NAME]
+
+	return strings.Replace(string(kmsServiceToken), " ", "", -1), nil
+}
+
+// Fetches service account credentials from a Kubernetes secret specified in the kmsSecret object, extracts the access key, public key, and private key from the secret, and returns them as a ServiceAccountCredentials object.
+// If any keys are missing or an error occurs, returns an empty object or an error object, respectively.
+func (r *KMSSecretReconciler) getKMSServiceAccountCredentialsFromKubeSecret(ctx context.Context, kmsSecret v1alpha1.KMSSecret) (serviceAccountDetails model.ServiceAccountDetails, err error) {
+
+	secretNamespace := kmsSecret.Spec.Authentication.ServiceAccount.ServiceAccountSecretReference.SecretNamespace
+	secretName := kmsSecret.Spec.Authentication.ServiceAccount.ServiceAccountSecretReference.SecretName
+
+	serviceAccountCredsFromKubeSecret, err := util.GetKubeSecretByNamespacedName(ctx, r.Client, types.NamespacedName{
+		Namespace: secretNamespace,
+		Name:      secretName,
+	})
+
+	if k8Errors.IsNotFound(err) || (secretNamespace == "" && secretName == "") {
+		return model.ServiceAccountDetails{}, nil
+	}
+
+	if err != nil {
+		if util.IsNamespaceScopedError(err, r.IsNamespaceScoped) {
+			return model.ServiceAccountDetails{}, fmt.Errorf("unable to fetch Kubernetes service account credentials secret. Your Operator installation is namespace scoped, and cannot read secrets outside of the namespace it is installed in. Please ensure the service account credentials secret is in the same namespace as the operator. [err=%v]", err)
+		}
+		return model.ServiceAccountDetails{}, fmt.Errorf("something went wrong when fetching your service account credentials [err=%s]", err)
+	}
+
+	accessKeyFromSecret := serviceAccountCredsFromKubeSecret.Data[constants.SERVICE_ACCOUNT_ACCESS_KEY]
+	publicKeyFromSecret := serviceAccountCredsFromKubeSecret.Data[constants.SERVICE_ACCOUNT_PUBLIC_KEY]
+	privateKeyFromSecret := serviceAccountCredsFromKubeSecret.Data[constants.SERVICE_ACCOUNT_PRIVATE_KEY]
+
+	if accessKeyFromSecret == nil || publicKeyFromSecret == nil || privateKeyFromSecret == nil {
+		return model.ServiceAccountDetails{}, nil
+	}
+
+	return model.ServiceAccountDetails{AccessKey: string(accessKeyFromSecret), PrivateKey: string(privateKeyFromSecret), PublicKey: string(publicKeyFromSecret)}, nil
+}
+
+func convertBinaryToStringMap(binaryMap map[string][]byte) map[string]string {
+	stringMap := make(map[string]string)
+	for k, v := range binaryMap {
+		stringMap[k] = string(v)
+	}
+	return stringMap
+}
+
+func (r *KMSSecretReconciler) createKMSManagedKubeResource(ctx context.Context, logger logr.Logger, kmsSecret v1alpha1.KMSSecret, managedSecretReferenceInterface interface{}, secretsFromAPI []model.SingleEnvironmentVariable, ETag string, resourceType constants.ManagedKubeResourceType) error {
+	plainProcessedSecrets := make(map[string][]byte)
+
+	var managedTemplateData *v1alpha1.SecretTemplate
+
+	if resourceType == constants.MANAGED_KUBE_RESOURCE_TYPE_SECRET {
+		managedTemplateData = managedSecretReferenceInterface.(v1alpha1.ManagedKubeSecretConfig).Template
+	} else if resourceType == constants.MANAGED_KUBE_RESOURCE_TYPE_CONFIG_MAP {
+		managedTemplateData = managedSecretReferenceInterface.(v1alpha1.ManagedKubeConfigMapConfig).Template
+	}
+
+	if managedTemplateData == nil || managedTemplateData.IncludeAllSecrets {
+		for _, secret := range secretsFromAPI {
+			plainProcessedSecrets[secret.Key] = []byte(secret.Value) // plain process
+		}
+	}
+
+	if managedTemplateData != nil {
+		secretKeyValue := make(map[string]model.SecretTemplateOptions)
+		for _, secret := range secretsFromAPI {
+			secretKeyValue[secret.Key] = model.SecretTemplateOptions{
+				Value:      secret.Value,
+				SecretPath: secret.SecretPath,
+			}
+		}
+
+		for templateKey, userTemplate := range managedTemplateData.Data {
+			tmpl, err := tpl.New("secret-templates").Funcs(template.GetTemplateFunctions()).Parse(userTemplate)
+			if err != nil {
+				return fmt.Errorf("unable to compile template: %s [err=%v]", templateKey, err)
+			}
+
+			buf := bytes.NewBuffer(nil)
+			err = tmpl.Execute(buf, secretKeyValue)
+			if err != nil {
+				return fmt.Errorf("unable to execute template: %s [err=%v]", templateKey, err)
+			}
+			plainProcessedSecrets[templateKey] = buf.Bytes()
+		}
+	}
+
+	// Determine labels and annotations for the managed resource
+	labels := map[string]string{}
+	annotations := map[string]string{}
+
+	if managedTemplateData != nil && managedTemplateData.Metadata != nil {
+		// Use template metadata directly
+		for k, v := range managedTemplateData.Metadata.Labels {
+			labels[k] = v
+		}
+		for k, v := range managedTemplateData.Metadata.Annotations {
+			annotations[k] = v
+		}
+	} else {
+		// Fall back to copying labels and annotations from KMSSecret CRD
+		for k, v := range kmsSecret.Labels {
+			labels[k] = v
+		}
+		for k, v := range kmsSecret.Annotations {
+			isSystem := false
+			for _, prefix := range SYSTEM_PREFIXES {
+				if strings.HasPrefix(k, prefix) {
+					isSystem = true
+					break
+				}
+			}
+			if !isSystem {
+				annotations[k] = v
+			}
+		}
+
+		// Track which labels and annotations we manage (for proper cleanup on updates)
+		managedLabelKeys := make(map[string]bool)
+		for k := range kmsSecret.Labels {
+			managedLabelKeys[k] = true
+		}
+		managedAnnotationKeys := make(map[string]bool)
+		for k := range kmsSecret.Annotations {
+			isSystem := false
+			for _, prefix := range SYSTEM_PREFIXES {
+				if strings.HasPrefix(k, prefix) {
+					isSystem = true
+					break
+				}
+			}
+			if !isSystem {
+				managedAnnotationKeys[k] = true
+			}
+		}
+		annotations[constants.MANAGED_LABELS_ANNOTATION] = formatManagedKeys(managedLabelKeys)
+		annotations[constants.MANAGED_ANNOTATIONS_ANNOTATION] = formatManagedKeys(managedAnnotationKeys)
+	}
+
+	if resourceType == constants.MANAGED_KUBE_RESOURCE_TYPE_SECRET {
+
+		managedSecretReference := managedSecretReferenceInterface.(v1alpha1.ManagedKubeSecretConfig)
+
+		annotations[constants.SECRET_VERSION_ANNOTATION] = ETag
+		// create a new secret as specified by the managed secret spec of CRD
+		newKubeSecretInstance := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        managedSecretReference.SecretName,
+				Namespace:   managedSecretReference.SecretNamespace,
+				Annotations: annotations,
+				Labels:      labels,
+			},
+			Type: corev1.SecretType(managedSecretReference.SecretType),
+			Data: plainProcessedSecrets,
+		}
+
+		if managedSecretReference.CreationPolicy == "Owner" {
+			// Set KMSSecret instance as the owner and controller of the managed secret
+			err := ctrl.SetControllerReference(&kmsSecret, newKubeSecretInstance, r.Scheme)
+			if err != nil {
+				return err
+			}
+		}
+
+		err := r.Client.Create(ctx, newKubeSecretInstance)
+		if err != nil {
+			return fmt.Errorf("unable to create the managed Kubernetes secret : %w", err)
+		}
+		logger.Info(fmt.Sprintf("Successfully created a managed Kubernetes secret with your Hanzo KMS secrets. Type: %s", managedSecretReference.SecretType))
+		return nil
+	} else if resourceType == constants.MANAGED_KUBE_RESOURCE_TYPE_CONFIG_MAP {
+
+		managedSecretReference := managedSecretReferenceInterface.(v1alpha1.ManagedKubeConfigMapConfig)
+
+		// create a new config map as specified by the managed secret spec of CRD
+		newKubeConfigMapInstance := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        managedSecretReference.ConfigMapName,
+				Namespace:   managedSecretReference.ConfigMapNamespace,
+				Annotations: annotations,
+				Labels:      labels,
+			},
+			Data: convertBinaryToStringMap(plainProcessedSecrets),
+		}
+
+		if managedSecretReference.CreationPolicy == "Owner" {
+			// Set KMSSecret instance as the owner and controller of the managed config map
+			err := ctrl.SetControllerReference(&kmsSecret, newKubeConfigMapInstance, r.Scheme)
+			if err != nil {
+				return err
+			}
+		}
+
+		err := r.Client.Create(ctx, newKubeConfigMapInstance)
+		if err != nil {
+			return fmt.Errorf("unable to create the managed Kubernetes config map : %w", err)
+		}
+		logger.Info(fmt.Sprintf("Successfully created a managed Kubernetes config map with your Hanzo KMS secrets. Type: %s", managedSecretReference.ConfigMapName))
+		return nil
+
+	}
+	return fmt.Errorf("invalid resource type")
+
+}
+
+func parseManagedKeys(value string) map[string]bool {
+	managedKeys := make(map[string]bool)
+	if value == "" {
+		return managedKeys
+	}
+	keys := strings.Split(value, ",")
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			managedKeys[key] = true
+		}
+	}
+	return managedKeys
+}
+
+func formatManagedKeys(keys map[string]bool) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	keyList := make([]string, 0, len(keys))
+	for k := range keys {
+		keyList = append(keyList, k)
+	}
+	sort.Strings(keyList)
+	return strings.Join(keyList, ",")
+}
+
+// syncLabelsAndAnnotations syncs labels and annotations to the managed resource.
+// If templateMetadata is provided, it uses those values directly instead of copying from the KMSSecret CRD.
+// When using template metadata, we simply replace all labels/annotations with the template values.
+// When not using template metadata, we use the existing tracking mechanism to manage labels/annotations from the CRD.
+func (r *KMSSecretReconciler) syncLabelsAndAnnotations(kmsSecret v1alpha1.KMSSecret, existingAnnotations map[string]string, existingLabels map[string]string, templateMetadata *v1alpha1.SecretTemplateMetadata) (map[string]string, map[string]string) {
+	// If template metadata is provided, use it directly
+	if templateMetadata != nil {
+		newLabels := make(map[string]string)
+		for k, v := range templateMetadata.Labels {
+			newLabels[k] = v
+		}
+
+		newAnnotations := make(map[string]string)
+		// Preserve system annotations
+		for k, v := range existingAnnotations {
+			isSystem := false
+			for _, prefix := range SYSTEM_PREFIXES {
+				if strings.HasPrefix(k, prefix) {
+					isSystem = true
+					break
+				}
+			}
+			if isSystem || k == constants.SECRET_VERSION_ANNOTATION {
+				newAnnotations[k] = v
+			}
+		}
+		for k, v := range templateMetadata.Annotations {
+			newAnnotations[k] = v
+		}
+
+		return newAnnotations, newLabels
+	}
+
+	// Fall back to existing behavior: sync from CRD with tracking
+	previouslyManagedLabels := parseManagedKeys(existingAnnotations[constants.MANAGED_LABELS_ANNOTATION])
+	previouslyManagedAnnotations := parseManagedKeys(existingAnnotations[constants.MANAGED_ANNOTATIONS_ANNOTATION])
+
+	currentCrdLabelKeys := make(map[string]bool)
+	for k := range kmsSecret.Labels {
+		currentCrdLabelKeys[k] = true
+	}
+
+	currentCrdAnnotationKeys := make(map[string]bool)
+	for k := range kmsSecret.Annotations {
+		isSystem := false
+		for _, prefix := range SYSTEM_PREFIXES {
+			if strings.HasPrefix(k, prefix) {
+				isSystem = true
+				break
+			}
+		}
+		if !isSystem {
+			currentCrdAnnotationKeys[k] = true
+		}
+	}
+
+	newLabels := make(map[string]string)
+	for k, v := range existingLabels {
+		if !previouslyManagedLabels[k] {
+			newLabels[k] = v
+		}
+	}
+	for k, v := range kmsSecret.Labels {
+		newLabels[k] = v
+	}
+
+	newAnnotations := make(map[string]string)
+	for k, v := range existingAnnotations {
+		isSystem := false
+		for _, prefix := range SYSTEM_PREFIXES {
+			if strings.HasPrefix(k, prefix) {
+				isSystem = true
+				break
+			}
+		}
+		if isSystem || k == constants.SECRET_VERSION_ANNOTATION || k == constants.MANAGED_LABELS_ANNOTATION || k == constants.MANAGED_ANNOTATIONS_ANNOTATION {
+			newAnnotations[k] = v
+		} else if !previouslyManagedAnnotations[k] {
+			newAnnotations[k] = v
+		}
+	}
+
+	for k, v := range kmsSecret.Annotations {
+		isSystem := false
+		for _, prefix := range SYSTEM_PREFIXES {
+			if strings.HasPrefix(k, prefix) {
+				isSystem = true
+				break
+			}
+		}
+		if !isSystem {
+			newAnnotations[k] = v
+		}
+	}
+
+	newAnnotations[constants.MANAGED_LABELS_ANNOTATION] = formatManagedKeys(currentCrdLabelKeys)
+	newAnnotations[constants.MANAGED_ANNOTATIONS_ANNOTATION] = formatManagedKeys(currentCrdAnnotationKeys)
+
+	return newAnnotations, newLabels
+}
+
+func (r *KMSSecretReconciler) updateKMSManagedKubeSecret(ctx context.Context, logger logr.Logger, kmsSecret v1alpha1.KMSSecret, managedSecretReference v1alpha1.ManagedKubeSecretConfig, managedKubeSecret corev1.Secret, secretsFromAPI []model.SingleEnvironmentVariable, ETag string) error {
+	managedTemplateData := managedSecretReference.Template
+
+	plainProcessedSecrets := make(map[string][]byte)
+	if managedTemplateData == nil || managedTemplateData.IncludeAllSecrets {
+		for _, secret := range secretsFromAPI {
+			plainProcessedSecrets[secret.Key] = []byte(secret.Value)
+		}
+	}
+
+	if managedTemplateData != nil {
+		secretKeyValue := make(map[string]model.SecretTemplateOptions)
+		for _, secret := range secretsFromAPI {
+			secretKeyValue[secret.Key] = model.SecretTemplateOptions{
+				Value:      secret.Value,
+				SecretPath: secret.SecretPath,
+			}
+		}
+
+		for templateKey, userTemplate := range managedTemplateData.Data {
+			tmpl, err := tpl.New("secret-templates").Funcs(template.GetTemplateFunctions()).Parse(userTemplate)
+			if err != nil {
+				return fmt.Errorf("unable to compile template: %s [err=%v]", templateKey, err)
+			}
+
+			buf := bytes.NewBuffer(nil)
+			err = tmpl.Execute(buf, secretKeyValue)
+			if err != nil {
+				return fmt.Errorf("unable to execute template: %s [err=%v]", templateKey, err)
+			}
+			plainProcessedSecrets[templateKey] = buf.Bytes()
+		}
+	}
+
+	// Sync labels and annotations (uses template metadata if provided, otherwise falls back to CRD metadata)
+	var templateMetadata *v1alpha1.SecretTemplateMetadata
+	if managedTemplateData != nil {
+		templateMetadata = managedTemplateData.Metadata
+	}
+	newAnnotations, newLabels := r.syncLabelsAndAnnotations(kmsSecret, managedKubeSecret.ObjectMeta.Annotations, managedKubeSecret.ObjectMeta.Labels, templateMetadata)
+
+	managedKubeSecret.ObjectMeta.Labels = newLabels
+	managedKubeSecret.ObjectMeta.Annotations = newAnnotations
+	managedKubeSecret.Data = plainProcessedSecrets
+	managedKubeSecret.ObjectMeta.Annotations[constants.SECRET_VERSION_ANNOTATION] = ETag
+
+	err := r.Client.Update(ctx, &managedKubeSecret)
+	if err != nil {
+		return fmt.Errorf("unable to update Kubernetes secret because [%w]", err)
+	}
+
+	logger.Info("successfully updated managed Kubernetes secret")
+	return nil
+}
+
+func (r *KMSSecretReconciler) updateKMSManagedConfigMap(ctx context.Context, logger logr.Logger, kmsSecret v1alpha1.KMSSecret, managedConfigMapReference v1alpha1.ManagedKubeConfigMapConfig, managedConfigMap corev1.ConfigMap, secretsFromAPI []model.SingleEnvironmentVariable, ETag string) error {
+	managedTemplateData := managedConfigMapReference.Template
+
+	plainProcessedSecrets := make(map[string][]byte)
+	if managedTemplateData == nil || managedTemplateData.IncludeAllSecrets {
+		for _, secret := range secretsFromAPI {
+			plainProcessedSecrets[secret.Key] = []byte(secret.Value)
+		}
+	}
+
+	if managedTemplateData != nil {
+		secretKeyValue := make(map[string]model.SecretTemplateOptions)
+		for _, secret := range secretsFromAPI {
+			secretKeyValue[secret.Key] = model.SecretTemplateOptions{
+				Value:      secret.Value,
+				SecretPath: secret.SecretPath,
+			}
+		}
+
+		for templateKey, userTemplate := range managedTemplateData.Data {
+			tmpl, err := tpl.New("secret-templates").Funcs(template.GetTemplateFunctions()).Parse(userTemplate)
+			if err != nil {
+				return fmt.Errorf("unable to compile template: %s [err=%v]", templateKey, err)
+			}
+
+			buf := bytes.NewBuffer(nil)
+			err = tmpl.Execute(buf, secretKeyValue)
+			if err != nil {
+				return fmt.Errorf("unable to execute template: %s [err=%v]", templateKey, err)
+			}
+			plainProcessedSecrets[templateKey] = buf.Bytes()
+		}
+	}
+
+	// Sync labels and annotations (uses template metadata if provided, otherwise falls back to CRD metadata)
+	var templateMetadata *v1alpha1.SecretTemplateMetadata
+	if managedTemplateData != nil {
+		templateMetadata = managedTemplateData.Metadata
+	}
+	newAnnotations, newLabels := r.syncLabelsAndAnnotations(kmsSecret, managedConfigMap.ObjectMeta.Annotations, managedConfigMap.ObjectMeta.Labels, templateMetadata)
+
+	managedConfigMap.ObjectMeta.Labels = newLabels
+	managedConfigMap.ObjectMeta.Annotations = newAnnotations
+	managedConfigMap.Data = convertBinaryToStringMap(plainProcessedSecrets)
+	managedConfigMap.ObjectMeta.Annotations[constants.SECRET_VERSION_ANNOTATION] = ETag
+
+	err := r.Client.Update(ctx, &managedConfigMap)
+	if err != nil {
+		return fmt.Errorf("unable to update Kubernetes config map because [%w]", err)
+	}
+
+	logger.Info("successfully updated managed Kubernetes config map")
+	return nil
+}
+
+func (r *KMSSecretReconciler) fetchSecretsFromAPI(ctx context.Context, logger logr.Logger, authDetails util.AuthenticationDetails, kmsClient kmsSdk.ClientInterface, kmsSecret v1alpha1.KMSSecret) ([]model.SingleEnvironmentVariable, error) {
+
+	if authDetails.AuthStrategy == util.AuthStrategy.SERVICE_ACCOUNT { // Service Account // ! Legacy auth method
+		serviceAccountCreds, err := r.getKMSServiceAccountCredentialsFromKubeSecret(ctx, kmsSecret)
+		if err != nil {
+			return nil, fmt.Errorf("ReconcileKMSSecret: unable to get service account creds from kube secret [err=%s]", err)
+		}
+
+		plainTextSecretsFromApi, err := util.GetPlainTextSecretsViaServiceAccount(kmsClient, serviceAccountCreds, kmsSecret.Spec.Authentication.ServiceAccount.ProjectId, kmsSecret.Spec.Authentication.ServiceAccount.EnvironmentName)
+		if err != nil {
+			return nil, fmt.Errorf("\nfailed to get secrets because [err=%v]", err)
+		}
+
+		logger.Info("ReconcileKMSSecret: Fetched secrets via service account")
+
+		return plainTextSecretsFromApi, nil
+
+	} else if authDetails.AuthStrategy == util.AuthStrategy.SERVICE_TOKEN { // Service Tokens // ! Legacy / Deprecated auth method
+		kmsToken, err := r.getKMSTokenFromKubeSecret(ctx, kmsSecret)
+		if err != nil {
+			return nil, fmt.Errorf("ReconcileKMSSecret: unable to get service token from kube secret [err=%s]", err)
+		}
+
+		envSlug := kmsSecret.Spec.Authentication.ServiceToken.SecretsScope.EnvSlug
+		secretsPath := kmsSecret.Spec.Authentication.ServiceToken.SecretsScope.SecretsPath
+		recursive := kmsSecret.Spec.Authentication.ServiceToken.SecretsScope.Recursive
+
+		plainTextSecretsFromApi, err := util.GetPlainTextSecretsViaServiceToken(kmsClient, kmsToken, envSlug, secretsPath, recursive)
+		if err != nil {
+			return nil, fmt.Errorf("\nfailed to get secrets because [err=%v]", err)
+		}
+
+		logger.Info("ReconcileKMSSecret: Fetched secrets via [type=SERVICE_TOKEN]")
+
+		return plainTextSecretsFromApi, nil
+
+	} else if authDetails.IsMachineIdentityAuth { // * Machine Identity authentication, the SDK will be authenticated at this point
+		if err := authDetails.MachineIdentityScope.ValidateScope(); err != nil {
+			return nil, fmt.Errorf("invalid machine identity scope [err=%s]", err)
+		}
+
+		if authDetails.MachineIdentityScope.ProjectSlug != "" {
+			projectId, err := util.ExtractProjectIdFromSlug(kmsClient.Auth().GetAccessToken(), authDetails.MachineIdentityScope.ProjectSlug)
+
+			logger.Info(fmt.Sprintf("ReconcileKMSSecret: Extracted project id from slug [projectId=%s] [projectSlug=%s]", projectId, authDetails.MachineIdentityScope.ProjectSlug))
+			if err != nil {
+				return nil, fmt.Errorf("unable to extract project id from slug [err=%s]", err)
+			}
+
+			authDetails.MachineIdentityScope.ProjectID = projectId
+		}
+
+		plainTextSecretsFromApi, err := util.GetPlainTextSecretsViaMachineIdentity(kmsClient, authDetails.MachineIdentityScope)
+
+		if err != nil {
+			return nil, fmt.Errorf("\nfailed to get secrets because [err=%v]", err)
+		}
+
+		if authDetails.MachineIdentityScope.SecretName != "" {
+			logger.Info(fmt.Sprintf("ReconcileKMSSecret: Fetched secret via machine identity [type=%v] [secretName=%s]", authDetails.AuthStrategy, authDetails.MachineIdentityScope.SecretName))
+		} else {
+			logger.Info(fmt.Sprintf("ReconcileKMSSecret: Fetched secrets via machine identity [type=%v]", authDetails.AuthStrategy))
+		}
+		return plainTextSecretsFromApi, nil
+
+	} else {
+		return nil, errors.New("no authentication method provided. Please configure a authentication method then try again")
+	}
+}
+
+func (r *KMSSecretReconciler) getResourceVariables(kmsSecret v1alpha1.KMSSecret, resourceVariablesMap map[string]util.ResourceVariables) util.ResourceVariables {
+
+	var resourceVariables util.ResourceVariables
+
+	if _, ok := resourceVariablesMap[string(kmsSecret.UID)]; !ok {
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		client := kmsSdk.NewClient(ctx, kmsSdk.Config{
+			SiteUrl:       config.API_HOST_URL,
+			CaCertificate: config.API_CA_CERTIFICATE,
+			UserAgent:     constants.USER_AGENT_NAME,
+		})
+
+		// SSE registry will be initialized lazily in OpenInstantUpdatesStream
+		// when eventCh is available
+		resourceVariablesMap[string(kmsSecret.UID)] = util.ResourceVariables{
+			KMSClient:  client,
+			CancelCtx:        cancel,
+			AuthDetails:      util.AuthenticationDetails{},
+			ServerSentEvents: nil,
+		}
+
+		resourceVariables = resourceVariablesMap[string(kmsSecret.UID)]
+
+	} else {
+		resourceVariables = resourceVariablesMap[string(kmsSecret.UID)]
+	}
+
+	return resourceVariables
+}
+
+func (r *KMSSecretReconciler) updateResourceVariables(kmsSecret v1alpha1.KMSSecret, resourceVariables util.ResourceVariables, resourceVariablesMap map[string]util.ResourceVariables) {
+	resourceVariablesMap[string(kmsSecret.UID)] = resourceVariables
+}
+
+func isOwnedByKMSSecret(obj client.Object, kmsSecretUID types.UID) bool {
+	for _, ownerRef := range obj.GetOwnerReferences() {
+		if ownerRef.UID == kmsSecretUID &&
+			ownerRef.Kind == constants.KMS_SECRET_KIND {
+			return true
+		}
+	}
+	return false
+}
+
+// Removes secrets and configmaps that are owned by the KMSSecret but are no longer referenced in the spec
+// Best effort, don't fail reconciliation
+func (r *KMSSecretReconciler) deleteUnreferencedOwnedResources(
+	ctx context.Context,
+	logger logr.Logger,
+	kmsSecret v1alpha1.KMSSecret,
+	secretOwnerReferences map[string]bool,
+	configMapOwnerReferences map[string]bool,
+) {
+	secretList := &corev1.SecretList{}
+	if err := r.List(ctx, secretList, client.InNamespace(kmsSecret.Namespace)); err != nil {
+		logger.Error(err, "Failed to list secrets for cleanup")
+		return
+	}
+
+	for _, secret := range secretList.Items {
+		if isOwnedByKMSSecret(&secret, kmsSecret.UID) {
+			key := secret.Namespace + "/" + secret.Name
+			if !secretOwnerReferences[key] {
+				logger.Info("Deleting orphaned owned secret", "secret", key)
+				if err := r.Delete(ctx, &secret); err != nil {
+					logger.Error(err, "Failed to delete orphaned owned secret", "secret", key)
+				}
+			}
+		}
+	}
+
+	configMapList := &corev1.ConfigMapList{}
+	if err := r.List(ctx, configMapList, client.InNamespace(kmsSecret.Namespace)); err != nil {
+		logger.Error(err, "Failed to list configmaps for cleanup")
+		return
+	}
+
+	for _, cm := range configMapList.Items {
+		if isOwnedByKMSSecret(&cm, kmsSecret.UID) {
+			key := cm.Namespace + "/" + cm.Name
+			if !configMapOwnerReferences[key] {
+				logger.Info("Deleting orphaned owned configmap", "configmap", key)
+				if err := r.Delete(ctx, &cm); err != nil {
+					logger.Error(err, "Failed to delete orphaned owned configmap", "configmap", key)
+				}
+			}
+		}
+	}
+}
+
+func (r *KMSSecretReconciler) ReconcileKMSSecret(ctx context.Context, logger logr.Logger, kmsSecret *v1alpha1.KMSSecret, managedKubeSecretReferences []v1alpha1.ManagedKubeSecretConfig, managedKubeConfigMapReferences []v1alpha1.ManagedKubeConfigMapConfig, resourceVariablesMap map[string]util.ResourceVariables) (int, error) {
+
+	if kmsSecret == nil {
+		return 0, fmt.Errorf("kmsSecret is nil")
+	}
+
+	resourceVariables := r.getResourceVariables(*kmsSecret, resourceVariablesMap)
+	kmsClient := resourceVariables.KMSClient
+	cancelCtx := resourceVariables.CancelCtx
+	authDetails := resourceVariables.AuthDetails
+	var err error
+
+	if authDetails.AuthStrategy == "" {
+		logger.Info("No authentication strategy found. Attempting to authenticate")
+		authDetails, err = util.HandleAuthentication(ctx, util.SecretAuthInput{
+			Secret: *kmsSecret,
+			Type:   util.SecretCrd.KMS_SECRET,
+		}, r.Client, kmsClient, r.IsNamespaceScoped)
+
+		r.SetKMSTokenLoadCondition(ctx, logger, kmsSecret, authDetails.AuthStrategy, err)
+
+		if err != nil {
+			return 0, fmt.Errorf("unable to authenticate [err=%s]", err)
+		}
+
+		r.updateResourceVariables(*kmsSecret, util.ResourceVariables{
+			KMSClient:  kmsClient,
+			CancelCtx:        cancelCtx,
+			AuthDetails:      authDetails,
+			ServerSentEvents: resourceVariables.ServerSentEvents, // Preserve existing SSE registry
+		}, resourceVariablesMap)
+	}
+
+	plainTextSecretsFromApi, err := r.fetchSecretsFromAPI(ctx, logger, authDetails, kmsClient, *kmsSecret)
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch secrets from API for managed secrets [err=%s]", err)
+	}
+	secretsCount := len(plainTextSecretsFromApi)
+	secretOwnerReferences := make(map[string]bool)
+
+	if len(managedKubeSecretReferences) > 0 {
+		for _, managedSecretReference := range managedKubeSecretReferences {
+			if managedSecretReference.CreationPolicy == "Owner" {
+				key := managedSecretReference.SecretNamespace + "/" + managedSecretReference.SecretName
+				secretOwnerReferences[key] = true
+			}
+			// Look for managed secret by name and namespace
+			managedKubeSecret, err := util.GetKubeSecretByNamespacedName(ctx, r.Client, types.NamespacedName{
+				Name:      managedSecretReference.SecretName,
+				Namespace: managedSecretReference.SecretNamespace,
+			})
+
+			if err != nil && !k8Errors.IsNotFound(err) {
+				if util.IsNamespaceScopedError(err, r.IsNamespaceScoped) {
+					return 0, fmt.Errorf("unable to fetch Kubernetes secret. Your Operator installation is namespace scoped, and cannot read secrets outside of the namespace it is installed in. Please ensure the secret is in the same namespace as the operator. [err=%v]", err)
+				}
+				return 0, fmt.Errorf("something went wrong when fetching the managed Kubernetes secret [%w]", err)
+			}
+
+			newEtag := crypto.ComputeEtag([]byte(fmt.Sprintf("%v", plainTextSecretsFromApi)))
+			if managedKubeSecret == nil {
+				if err := r.createKMSManagedKubeResource(ctx, logger, *kmsSecret, managedSecretReference, plainTextSecretsFromApi, newEtag, constants.MANAGED_KUBE_RESOURCE_TYPE_SECRET); err != nil {
+					return 0, fmt.Errorf("failed to create managed secret [err=%s]", err)
+				}
+			} else {
+				if err := r.updateKMSManagedKubeSecret(ctx, logger, *kmsSecret, managedSecretReference, *managedKubeSecret, plainTextSecretsFromApi, newEtag); err != nil {
+					return 0, fmt.Errorf("failed to update managed secret [err=%s]", err)
+				}
+			}
+		}
+	}
+
+	configMapOwnerReferences := make(map[string]bool)
+
+	if len(managedKubeConfigMapReferences) > 0 {
+		for _, managedConfigMapReference := range managedKubeConfigMapReferences {
+			if managedConfigMapReference.CreationPolicy == "Owner" {
+				key := managedConfigMapReference.ConfigMapNamespace + "/" + managedConfigMapReference.ConfigMapName
+				configMapOwnerReferences[key] = true
+			}
+
+			managedKubeConfigMap, err := util.GetKubeConfigMapByNamespacedName(ctx, r.Client, types.NamespacedName{
+				Name:      managedConfigMapReference.ConfigMapName,
+				Namespace: managedConfigMapReference.ConfigMapNamespace,
+			})
+
+			if err != nil && !k8Errors.IsNotFound(err) {
+				if util.IsNamespaceScopedError(err, r.IsNamespaceScoped) {
+					return 0, fmt.Errorf("unable to fetch Kubernetes config map. Your Operator installation is namespace scoped, and cannot read config maps outside of the namespace it is installed in. Please ensure the config map is in the same namespace as the operator. [err=%v]", err)
+				}
+				return 0, fmt.Errorf("something went wrong when fetching the managed Kubernetes config map [%w]", err)
+			}
+
+			newEtag := crypto.ComputeEtag([]byte(fmt.Sprintf("%v", plainTextSecretsFromApi)))
+			if managedKubeConfigMap == nil {
+				if err := r.createKMSManagedKubeResource(ctx, logger, *kmsSecret, managedConfigMapReference, plainTextSecretsFromApi, newEtag, constants.MANAGED_KUBE_RESOURCE_TYPE_CONFIG_MAP); err != nil {
+					return 0, fmt.Errorf("failed to create managed config map [err=%s]", err)
+				}
+			} else {
+				if err := r.updateKMSManagedConfigMap(ctx, logger, *kmsSecret, managedConfigMapReference, *managedKubeConfigMap, plainTextSecretsFromApi, newEtag); err != nil {
+					return 0, fmt.Errorf("failed to update managed config map [err=%s]", err)
+				}
+			}
+
+		}
+	}
+
+	r.deleteUnreferencedOwnedResources(ctx, logger, *kmsSecret, secretOwnerReferences, configMapOwnerReferences)
+
+	return secretsCount, nil
+}
+
+func (r *KMSSecretReconciler) CloseInstantUpdatesStream(ctx context.Context, logger logr.Logger, kmsSecret *v1alpha1.KMSSecret, resourceVariablesMap map[string]util.ResourceVariables) error {
+	if kmsSecret == nil {
+		return fmt.Errorf("kmsSecret is nil")
+	}
+
+	variables := r.getResourceVariables(*kmsSecret, resourceVariablesMap)
+
+	// Close SSE connection if it exists
+	if variables.ServerSentEvents != nil {
+		variables.ServerSentEvents.Close()
+	}
+
+	return nil
+}
+
+func (r *KMSSecretReconciler) OpenInstantUpdatesStream(ctx context.Context, logger logr.Logger, kmsSecret *v1alpha1.KMSSecret, resourceVariablesMap map[string]util.ResourceVariables, eventCh chan<- event.TypedGenericEvent[client.Object]) error {
+	if kmsSecret == nil {
+		return fmt.Errorf("kmsSecret is nil")
+	}
+
+	variables := r.getResourceVariables(*kmsSecret, resourceVariablesMap)
+
+	identityScope := variables.AuthDetails.MachineIdentityScope
+
+	if err := identityScope.ValidateScope(); err != nil {
+		return fmt.Errorf("invalid machine identity scope [err=%s]", err)
+	}
+
+	kmsClient := variables.KMSClient
+
+	token := kmsClient.Auth().GetAccessToken()
+
+	// Resolve project ID from slug if needed
+	resolvedProjectID := identityScope.ProjectID
+	if identityScope.ProjectSlug != "" {
+		projectId, err := util.ExtractProjectIdFromSlug(kmsClient.Auth().GetAccessToken(), identityScope.ProjectSlug)
+		if err != nil {
+			return fmt.Errorf("unable to extract project id from slug [err=%s]", err)
+		}
+		resolvedProjectID = projectId
+	}
+
+	// Build secrets path with recursive suffix if needed
+	secretsPath := identityScope.SecretsPath
+	if identityScope.Recursive {
+		if strings.HasSuffix(secretsPath, "/") {
+			secretsPath += "**"
+		} else {
+			secretsPath += "/**"
+		}
+	}
+
+	// Build current params for change detection
+	currentParams := sse.SubscriptionParams{
+		ProjectID:   resolvedProjectID,
+		EnvSlug:     identityScope.EnvSlug,
+		SecretsPath: secretsPath,
+	}
+
+	// Check if SSE registry exists, create if needed
+	sseRegistry := variables.ServerSentEvents
+	if sseRegistry == nil {
+		// Create SSE registry with callbacks
+		sseRegistry = sse.NewConnectionRegistry(
+			// onEvent callback - triggers reconciliation
+			func(ev sse.Event) {
+				logger.Info("Received SSE Event", "event", ev.Event, "data", ev.Data)
+				eventCh <- event.TypedGenericEvent[client.Object]{
+					Object: kmsSecret,
+				}
+			},
+			// onError callback - log errors
+			func(err error) {
+				logger.Error(err, "SSE error occurred")
+			},
+			// onReconnect callback - triggers reconciliation after max retries
+			func() {
+				logger.Info("SSE max retries exceeded, triggering reconciliation")
+				eventCh <- event.TypedGenericEvent[client.Object]{
+					Object: kmsSecret,
+				}
+			},
+		)
+		variables.ServerSentEvents = sseRegistry
+	}
+
+	// Check if params changed from existing connection
+	if existingParams, ok := sseRegistry.GetParams(); ok {
+		if existingParams.Equals(currentParams) {
+			// Already connected with same params, check if connection is still valid
+			if sseRegistry.IsConnected() {
+				logger.Info("SSE connection already active with same params, reusing")
+				return nil
+			}
+			// Connection is dead, will reconnect below
+			logger.Info("SSE connection dead, reconnecting with same params")
+		} else {
+			// Params changed, log it
+			logger.Info("SSE params changed, reconnecting",
+				"old_project", existingParams.ProjectID,
+				"new_project", currentParams.ProjectID,
+				"old_env", existingParams.EnvSlug,
+				"new_env", currentParams.EnvSlug,
+				"old_path", existingParams.SecretsPath,
+				"new_path", currentParams.SecretsPath)
+		}
+	}
+
+	// Subscribe with the new params (will close old connection if needed)
+	err := sseRegistry.SubscribeWithParams(currentParams, func() (*http.Response, error) {
+		httpClient, err := util.CreateRestyClient(model.CreateRestyClientOptions{
+			AccessToken: token,
+			Headers: map[string]string{
+				"Content-Type": "application/json",
+				"Accept":       "text/event-stream",
+				"Connection":   "keep-alive",
+			},
+		})
+
+		if err != nil {
+			return nil, fmt.Errorf("unable to create resty client. [err=%v]", err)
+		}
+
+		req, err := api.CallSubscribeProjectEvents(httpClient, currentParams.ProjectID, currentParams.SecretsPath, currentParams.EnvSlug)
+		if err != nil {
+			return nil, err
+		}
+
+		return req, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("unable to connect sse [err=%s]", err)
+	}
+
+	// Update resource variables to persist the SSE registry
+	r.updateResourceVariables(*kmsSecret, variables, resourceVariablesMap)
+
+	logger.Info("SSE connection established",
+		"projectID", currentParams.ProjectID,
+		"envSlug", currentParams.EnvSlug,
+		"secretsPath", currentParams.SecretsPath)
+
+	return nil
+}
