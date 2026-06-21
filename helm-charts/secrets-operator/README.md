@@ -39,7 +39,7 @@ kubectl create secret generic kms-example-service-token \
 
 # Create the KMSSecret
 cat <<EOF | kubectl apply -f -
-apiVersion: secrets.hanzo.ai/v1alpha1
+apiVersion: kms.hanzo.ai/v1alpha1
 kind: KMSSecret
 metadata:
   # Name of of this KMSSecret resource
@@ -81,7 +81,7 @@ And if you want to [auto-reload](https://hanzo.ai/docs/integrations/platforms/ku
 
 ```yaml
 annotations:
-  secrets.hanzo.ai/auto-reload: "true"
+  kms.hanzo.ai/auto-reload: "true"
 ```
 
 ## Parameters

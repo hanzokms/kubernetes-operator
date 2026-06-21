@@ -55,7 +55,7 @@ rules:
   verbs:
   - create
 - apiGroups:
-  - secrets.hanzo.ai
+  - kms.hanzo.ai
   resources:
   - clustergenerators
   - kmsdynamicsecrets
@@ -70,7 +70,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - secrets.hanzo.ai
+  - kms.hanzo.ai
   resources:
   - kmsdynamicsecrets/finalizers
   - kmspushsecrets/finalizers
@@ -78,7 +78,7 @@ rules:
   verbs:
   - update
 - apiGroups:
-  - secrets.hanzo.ai
+  - kms.hanzo.ai
   resources:
   - kmsdynamicsecrets/status
   - kmspushsecrets/status

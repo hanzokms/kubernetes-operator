@@ -58,9 +58,9 @@ func (r *KMSPushSecretReconciler) GetLogger(req ctrl.Request) logr.Logger {
 	return r.BaseLogger.WithValues("kmspushsecret", req.NamespacedName)
 }
 
-//+kubebuilder:rbac:groups=secrets.hanzo.ai,resources=kmspushsecrets,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=secrets.hanzo.ai,resources=kmspushsecrets/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=secrets.hanzo.ai,resources=kmspushsecrets/finalizers,verbs=update
+//+kubebuilder:rbac:groups=kms.hanzo.ai,resources=kmspushsecrets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=kms.hanzo.ai,resources=kmspushsecrets/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=kms.hanzo.ai,resources=kmspushsecrets/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;delete
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=list;watch;get;update
@@ -68,7 +68,7 @@ func (r *KMSPushSecretReconciler) GetLogger(req ctrl.Request) logr.Logger {
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 //+kubebuilder:rbac:groups="authentication.k8s.io",resources=tokenreviews,verbs=create
 //+kubebuilder:rbac:groups="",resources=serviceaccounts/token,verbs=create
-//+kubebuilder:rbac:groups=secrets.hanzo.ai,resources=clustergenerators,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=kms.hanzo.ai,resources=clustergenerators,verbs=get;list;watch;create;update;patch;delete
 
 func (r *KMSPushSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 

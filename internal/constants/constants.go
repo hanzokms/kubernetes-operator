@@ -14,15 +14,15 @@ const KMS_MACHINE_IDENTITY_CLIENT_ID = "clientId"
 const KMS_MACHINE_IDENTITY_CLIENT_SECRET = "clientSecret"
 
 const KMS_TOKEN_SECRET_KEY_NAME = "kmsToken"
-const SECRET_VERSION_ANNOTATION = "secrets.hanzo.ai/version"                  // used to set the version of secrets via Etag
-const MANAGED_LABELS_ANNOTATION = "secrets.hanzo.ai/managed-labels"           // comma-separated list of label keys we manage
-const MANAGED_ANNOTATIONS_ANNOTATION = "secrets.hanzo.ai/managed-annotations" // comma-separated list of annotation keys we manage
+const SECRET_VERSION_ANNOTATION = "kms.hanzo.ai/version"                  // used to set the version of secrets via Etag
+const MANAGED_LABELS_ANNOTATION = "kms.hanzo.ai/managed-labels"           // comma-separated list of label keys we manage
+const MANAGED_ANNOTATIONS_ANNOTATION = "kms.hanzo.ai/managed-annotations" // comma-separated list of annotation keys we manage
 const OPERATOR_SETTINGS_CONFIGMAP_NAME = "kms-config"
 const OPERATOR_SETTINGS_CONFIGMAP_NAMESPACE = "kms-operator-system"
 const KMS_DOMAIN = "https://kms.hanzo.ai/api"
 
-const KMS_PUSH_SECRET_FINALIZER_NAME = "pushsecret.secrets.hanzo.ai/finalizer"
-const KMS_DYNAMIC_SECRET_FINALIZER_NAME = "dynamicsecret.secrets.hanzo.ai/finalizer"
+const KMS_PUSH_SECRET_FINALIZER_NAME = "pushsecret.kms.hanzo.ai/finalizer"
+const KMS_DYNAMIC_SECRET_FINALIZER_NAME = "dynamicsecret.kms.hanzo.ai/finalizer"
 
 type PushSecretReplacePolicy string
 type PushSecretDeletionPolicy string

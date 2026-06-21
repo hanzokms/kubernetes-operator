@@ -2,10 +2,10 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
-  - bases/secrets.hanzo.ai_kmssecrets.yaml
-  - bases/secrets.hanzo.ai_kmspushsecrets.yaml
-  - bases/secrets.hanzo.ai_kmsdynamicsecrets.yaml
-  - bases/secrets.hanzo.ai_clustergenerators.yaml
+  - bases/kms.hanzo.ai_kmssecrets.yaml
+  - bases/kms.hanzo.ai_kmspushsecrets.yaml
+  - bases/kms.hanzo.ai_kmsdynamicsecrets.yaml
+  - bases/kms.hanzo.ai_clustergenerators.yaml
 #+kubebuilder:scaffold:crdkustomizeresource
 
 patchesStrategicMerge:

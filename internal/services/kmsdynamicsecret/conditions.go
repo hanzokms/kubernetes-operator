@@ -17,14 +17,14 @@ func (r *KMSDynamicSecretReconciler) SetReconcileAutoRedeploymentConditionStatus
 
 	if errorToConditionOn == nil {
 		meta.SetStatusCondition(&kmsDynamicSecret.Status.Conditions, metav1.Condition{
-			Type:    "secrets.hanzo.ai/AutoRedeployReady",
+			Type:    "kms.hanzo.ai/AutoRedeployReady",
 			Status:  metav1.ConditionTrue,
 			Reason:  "OK",
 			Message: fmt.Sprintf("Hanzo KMS has found %v deployments which are ready to be auto redeployed when dynamic secret lease changes", numDeployments),
 		})
 	} else {
 		meta.SetStatusCondition(&kmsDynamicSecret.Status.Conditions, metav1.Condition{
-			Type:    "secrets.hanzo.ai/AutoRedeployReady",
+			Type:    "kms.hanzo.ai/AutoRedeployReady",
 			Status:  metav1.ConditionFalse,
 			Reason:  "Error",
 			Message: fmt.Sprintf("Failed reconcile deployments because: %v", errorToConditionOn),
@@ -44,14 +44,14 @@ func (r *KMSDynamicSecretReconciler) SetAuthenticatedConditionStatus(ctx context
 
 	if errorToConditionOn == nil {
 		meta.SetStatusCondition(&kmsDynamicSecret.Status.Conditions, metav1.Condition{
-			Type:    "secrets.hanzo.ai/Authenticated",
+			Type:    "kms.hanzo.ai/Authenticated",
 			Status:  metav1.ConditionTrue,
 			Reason:  "OK",
 			Message: "Hanzo KMS has successfully authenticated with the Hanzo KMS API",
 		})
 	} else {
 		meta.SetStatusCondition(&kmsDynamicSecret.Status.Conditions, metav1.Condition{
-			Type:    "secrets.hanzo.ai/Authenticated",
+			Type:    "kms.hanzo.ai/Authenticated",
 			Status:  metav1.ConditionFalse,
 			Reason:  "Error",
 			Message: fmt.Sprintf("Failed to authenticate with Hanzo KMS API because: %v", errorToConditionOn),
@@ -71,14 +71,14 @@ func (r *KMSDynamicSecretReconciler) SetLeaseRenewalConditionStatus(ctx context.
 
 	if errorToConditionOn == nil {
 		meta.SetStatusCondition(&kmsDynamicSecret.Status.Conditions, metav1.Condition{
-			Type:    "secrets.hanzo.ai/LeaseRenewal",
+			Type:    "kms.hanzo.ai/LeaseRenewal",
 			Status:  metav1.ConditionTrue,
 			Reason:  "OK",
 			Message: "Hanzo KMS has successfully renewed the lease",
 		})
 	} else {
 		meta.SetStatusCondition(&kmsDynamicSecret.Status.Conditions, metav1.Condition{
-			Type:    "secrets.hanzo.ai/LeaseRenewal",
+			Type:    "kms.hanzo.ai/LeaseRenewal",
 			Status:  metav1.ConditionFalse,
 			Reason:  "Error",
 			Message: fmt.Sprintf("Failed to renew the lease because: %v", errorToConditionOn),
@@ -98,14 +98,14 @@ func (r *KMSDynamicSecretReconciler) SetCreatedLeaseConditionStatus(ctx context.
 
 	if errorToConditionOn == nil {
 		meta.SetStatusCondition(&kmsDynamicSecret.Status.Conditions, metav1.Condition{
-			Type:    "secrets.hanzo.ai/LeaseCreated",
+			Type:    "kms.hanzo.ai/LeaseCreated",
 			Status:  metav1.ConditionTrue,
 			Reason:  "OK",
 			Message: "Hanzo KMS has successfully created the lease",
 		})
 	} else {
 		meta.SetStatusCondition(&kmsDynamicSecret.Status.Conditions, metav1.Condition{
-			Type:    "secrets.hanzo.ai/LeaseCreated",
+			Type:    "kms.hanzo.ai/LeaseCreated",
 			Status:  metav1.ConditionFalse,
 			Reason:  "Error",
 			Message: fmt.Sprintf("Failed to create the lease because: %v", errorToConditionOn),
@@ -125,14 +125,14 @@ func (r *KMSDynamicSecretReconciler) SetReconcileConditionStatus(ctx context.Con
 
 	if errorToConditionOn == nil {
 		meta.SetStatusCondition(&kmsDynamicSecret.Status.Conditions, metav1.Condition{
-			Type:    "secrets.hanzo.ai/Reconcile",
+			Type:    "kms.hanzo.ai/Reconcile",
 			Status:  metav1.ConditionTrue,
 			Reason:  "OK",
 			Message: "Hanzo KMS has successfully reconciled the KMSDynamicSecret",
 		})
 	} else {
 		meta.SetStatusCondition(&kmsDynamicSecret.Status.Conditions, metav1.Condition{
-			Type:    "secrets.hanzo.ai/Reconcile",
+			Type:    "kms.hanzo.ai/Reconcile",
 			Status:  metav1.ConditionFalse,
 			Reason:  "Error",
 			Message: fmt.Sprintf("Failed to reconcile the KMSDynamicSecret because: %v", errorToConditionOn),

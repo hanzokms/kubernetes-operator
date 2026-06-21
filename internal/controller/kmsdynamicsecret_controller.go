@@ -54,9 +54,9 @@ func (r *KMSDynamicSecretReconciler) GetLogger(req ctrl.Request) logr.Logger {
 	return r.BaseLogger.WithValues("kmsdynamicsecret", req.NamespacedName)
 }
 
-// +kubebuilder:rbac:groups=secrets.hanzo.ai,resources=kmsdynamicsecrets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=secrets.hanzo.ai,resources=kmsdynamicsecrets/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=secrets.hanzo.ai,resources=kmsdynamicsecrets/finalizers,verbs=update
+// +kubebuilder:rbac:groups=kms.hanzo.ai,resources=kmsdynamicsecrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=kms.hanzo.ai,resources=kmsdynamicsecrets/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=kms.hanzo.ai,resources=kmsdynamicsecrets/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=list;watch;get;update
